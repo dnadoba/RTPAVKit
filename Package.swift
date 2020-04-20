@@ -5,6 +5,11 @@ import PackageDescription
 
 let package = Package(
     name: "RTPAVKit",
+    platforms: [
+        .iOS(.v13),
+        .macOS(SupportedPlatform.MacOSVersion.v10_15),
+        .watchOS(SupportedPlatform.WatchOSVersion.v6),
+    ],
     products: [
         // Products define the executables and libraries produced by a package, and make them visible to other packages.
         .library(
