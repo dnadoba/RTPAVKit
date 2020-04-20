@@ -7,8 +7,10 @@
 
 import Foundation
 import CoreMedia
+import VideoToolbox
 import SwiftRTP
 import BinaryKit
+import Network
 
 public extension CMSampleBuffer {
     @inlinable
@@ -81,5 +83,86 @@ public extension CMFormatDescription {
             }
         }
         return nalus
+    }
+}
+
+extension CVPixelBuffer {
+    /// Returns the width of the PixelBuffer in pixels.
+    var width: Int { CVPixelBufferGetWidth(self) }
+    /// Returns the height of the PixelBuffer in pixels.
+    var height: Int { CVPixelBufferGetHeight(self) }
+}
+
+public final class RTPH264Sender {
+    private let queue: DispatchQueue
+    private var encoder: VideoEncoder?
+    private let connection: NWConnection
+    private var rtpSerialzer: RTPSerialzer = .init(maxSizeOfPacket: 9216, synchronisationSource: RTPSynchronizationSource(rawValue: .random(in: UInt32.min...UInt32.max)))
+    private lazy var h264Serialzer: H264.NALNonInterleavedPacketSerializer<Data> = .init(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
+    public init(endpoint: NWEndpoint, targetQueue: DispatchQueue? = nil) {
+        queue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self)", target: targetQueue)
+        connection = NWConnection(to: endpoint, using: .udp)
+        connection.start(queue: queue)
+    }
+    
+    @discardableResult
+    public func setupEncoderIfNeeded(width: Int, height: Int) -> VideoEncoder {
+        if let encoder = self.encoder, encoder.width == width, encoder.height == encoder.height {
+            return encoder
+        }
+        let encoder = try! VideoEncoder(
+            width: width,
+            height: height,
+            codec: .h264,
+            encoderSpecification: [
+                kVTCompressionPropertyKey_AllowFrameReordering: false,
+                kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
+                kVTCompressionPropertyKey_RealTime: true,
+            ],
+            imageBufferAttributes: nil)
+        
+        encoder.callback = { [weak self] buffer, flags in
+            self?.sendBuffer(buffer)
+        }
+        
+        self.encoder = encoder
+        return encoder
+    }
+    
+    public func encodeAndSendFrame(_ frame: CVPixelBuffer, presentationTimeStamp: CMTime, frameDuration: CMTime) {
+        do {
+            let encoder = setupEncoderIfNeeded(width: frame.width, height: frame.height)
+            try encoder.encodeFrame(imageBuffer: frame, presentationTimeStamp: presentationTimeStamp, duration: frameDuration, frameProperties: [:
+                //kVTEncodeFrameOptionKey_ForceKeyFrame: true,
+            ])
+        } catch {
+            print(error, #file, #line)
+        }
+    }
+    private func sendBuffer(_ sampleBuffer: CMSampleBuffer) {
+        let nalus = sampleBuffer.convertToH264NALUnitsAndAddPPSAndSPSIfNeeded(dataType: Data.self)
+        
+        let timestamp = UInt32(sampleBuffer.presentationTimeStamp.convertScale(90_000, method: .default).value)
+        sendNalus(nalus, timestamp: timestamp)
+    }
+    private func sendNalus(_ nalus: [H264.NALUnit<Data>], timestamp: UInt32) {
+        guard connection.maximumDatagramSize > 0 else { return }
+        rtpSerialzer.maxSizeOfPacket = 9216
+        h264Serialzer.maxSizeOfNaluPacket = rtpSerialzer.maxSizeOfPayload
+        do {
+            let packets = try h264Serialzer.serialize(nalus, timestamp: timestamp, lastNALUsForGivenTimestamp: true)
+            connection.batch {
+                for packet in packets {
+                    do {
+                        let data: Data = try rtpSerialzer.serialze(packet)
+                        connection.send(content: data, completion: .idempotent)
+                    } catch {
+                        print(error, #file, #line)
+                    }
+                }
+            }
+        } catch {
+            print(error, #file, #line)
+        }
     }
 }
