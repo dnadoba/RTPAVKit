@@ -21,6 +21,9 @@ public final class VideoEncoder {
     public typealias Callback = (CMSampleBuffer, VTEncodeInfoFlags) -> ()
     public var callback: Callback?
     private var session: VTCompressionSession!
+    public let width: Int
+    public let height: Int
+    public let codec: VideoCodec
     public init(
         allocator: CFAllocator? = nil,
         width: Int,
@@ -30,6 +33,9 @@ public final class VideoEncoder {
         imageBufferAttributes: NSDictionary?,
         compressedDataAllocator: CFAllocator? = nil
     ) throws {
+        self.width = width
+        self.height = height
+        self.codec = codec
         let ptr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         var session: VTCompressionSession?
         let status = VTCompressionSessionCreate(
@@ -55,7 +61,6 @@ public final class VideoEncoder {
             throw OSStatusError(status, description: "failed to create \(VTCompressionSession.self) width: \(width) height: \(height) codec: \(codec) encoderSpecification: \(encoderSpecification as Any) imageBufferAttributes: \(imageBufferAttributes as Any)")
         }
         self.session = unwrapedSession
-        
     }
     deinit {
         if let session = session {
