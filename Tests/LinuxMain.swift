@@ -1,7 +1,1 @@
-import XCTest
-
-import RTPAVKitTests
-
-var tests = [XCTestCaseEntry]()
-tests += RTPAVKitTests.allTests()
-XCTMain(tests)
+fatalError("Run tests with `swift test --enable-test-discovery`.")

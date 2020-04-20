@@ -8,8 +8,4 @@ final class RTPAVKitTests: XCTestCase {
         // results.
         XCTAssertEqual(RTPAVKit().text, "Hello, World!")
     }
-
-    static var allTests = [
-        ("testExample", testExample),
-    ]
 }
