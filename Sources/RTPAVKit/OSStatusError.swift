@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Darwin
 
 fileprivate enum ApplePlatform {
     case macOS
@@ -54,8 +55,11 @@ struct OSStatusError: Error {
 }
 
 extension OSStatusError {
+    static func isSuccessfull(_ osStatus: OSStatus) -> Bool {
+        osStatus == KERN_SUCCESS
+    }
     static func check(_ osStatus: OSStatus, errorDescription: @autoclosure () -> String? = nil) throws {
-        guard osStatus == kOSReturnSuccess else {
+        guard osStatus == 0 else {
             throw OSStatusError(osStatus, description: errorDescription())
         }
     }

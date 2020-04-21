@@ -48,7 +48,8 @@ public final class VideoEncoder {
             compressedDataAllocator: compressedDataAllocator,
             outputCallback: { (selfPointer, _, status, infoFlags, sampleBuffer) in
                 let mySelf = Unmanaged<VideoEncoder>.fromOpaque(UnsafeRawPointer(selfPointer!)).takeUnretainedValue()
-                guard status == kOSReturnSuccess, let sampleBuffer = sampleBuffer else {
+                
+                guard OSStatusError.isSuccessfull(status), let sampleBuffer = sampleBuffer else {
                     print(OSStatusError(status, description: "failed to compress frame"))
                     return
                 }
@@ -57,7 +58,7 @@ public final class VideoEncoder {
                 
         }, refcon: ptr, compressionSessionOut: &session)
         
-        guard status == kOSReturnSuccess, let unwrapedSession = session else {
+        guard OSStatusError.isSuccessfull(status), let unwrapedSession = session else {
             throw OSStatusError(status, description: "failed to create \(VTCompressionSession.self) width: \(width) height: \(height) codec: \(codec) encoderSpecification: \(encoderSpecification as Any) imageBufferAttributes: \(imageBufferAttributes as Any)")
         }
         self.session = unwrapedSession

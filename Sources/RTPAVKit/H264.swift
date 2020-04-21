@@ -47,7 +47,7 @@ public extension CMSampleBuffer {
                     print(error, #file, #line)
                 }
             }
-            return kOSReturnSuccess
+            return KERN_SUCCESS
         }
         return nalus
     }
@@ -110,13 +110,23 @@ public final class RTPH264Sender {
         if let encoder = self.encoder, encoder.width == width, encoder.height == encoder.height {
             return encoder
         }
+        let encoderSpecification: NSDictionary = [
+            kVTCompressionPropertyKey_AllowFrameReordering: false,
+            kVTCompressionPropertyKey_RealTime: true,
+            kVTCompressionPropertyKey_MaximizePowerEfficiency: true,
+        ]
+        
+        #if os(macOS)
+        encoderSpecification.setValue(true, forKey: kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String)
+        #endif
+        
         let encoder = try! VideoEncoder(
             width: width,
             height: height,
             codec: .h264,
             encoderSpecification: [
                 kVTCompressionPropertyKey_AllowFrameReordering: false,
-                kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
+                
                 kVTCompressionPropertyKey_RealTime: true,
             ],
             imageBufferAttributes: nil)
@@ -129,25 +139,36 @@ public final class RTPH264Sender {
         return encoder
     }
     
+    var frameCount: Int = 0
+    
     public func encodeAndSendFrame(_ frame: CVPixelBuffer, presentationTimeStamp: CMTime, frameDuration: CMTime) {
+        frameCount += 1
         do {
             let encoder = setupEncoderIfNeeded(width: frame.width, height: frame.height)
-            try encoder.encodeFrame(imageBuffer: frame, presentationTimeStamp: presentationTimeStamp, duration: frameDuration, frameProperties: [:
-                //kVTEncodeFrameOptionKey_ForceKeyFrame: true,
+            try encoder.encodeFrame(imageBuffer: frame, presentationTimeStamp: presentationTimeStamp, duration: frameDuration, frameProperties: [
+                kVTEncodeFrameOptionKey_ForceKeyFrame: frameCount.isMultiple(of: 60),
             ])
         } catch {
             print(error, #file, #line)
         }
     }
+    var firstTimestampValue: Int64?
+    func getTimestampValueOffset(for timestampValue: Int64) -> Int64 {
+        guard let firstTimestampValue = firstTimestampValue else {
+            self.firstTimestampValue = timestampValue
+            return timestampValue
+        }
+        return firstTimestampValue
+    }
     private func sendBuffer(_ sampleBuffer: CMSampleBuffer) {
         let nalus = sampleBuffer.convertToH264NALUnitsAndAddPPSAndSPSIfNeeded(dataType: Data.self)
-        
-        let timestamp = UInt32(sampleBuffer.presentationTimeStamp.convertScale(90_000, method: .default).value)
+        let timestampValue = sampleBuffer.presentationTimeStamp.convertScale(90_000, method: .default).value
+        let timestamp = UInt32(timestampValue - getTimestampValueOffset(for: timestampValue))
         sendNalus(nalus, timestamp: timestamp)
     }
     private func sendNalus(_ nalus: [H264.NALUnit<Data>], timestamp: UInt32) {
         guard connection.maximumDatagramSize > 0 else { return }
-        rtpSerialzer.maxSizeOfPacket = 9216
+        rtpSerialzer.maxSizeOfPacket = min(9216, connection.maximumDatagramSize)
         h264Serialzer.maxSizeOfNaluPacket = rtpSerialzer.maxSizeOfPayload
         do {
             let packets = try h264Serialzer.serialize(nalus, timestamp: timestamp, lastNALUsForGivenTimestamp: true)
@@ -155,6 +176,7 @@ public final class RTPH264Sender {
                 for packet in packets {
                     do {
                         let data: Data = try rtpSerialzer.serialze(packet)
+                        //print("send data of size = \(data.count) - max size of packet \(rtpSerialzer.maxSizeOfPacket)")
                         connection.send(content: data, completion: .idempotent)
                     } catch {
                         print(error, #file, #line)
