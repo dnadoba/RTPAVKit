@@ -34,10 +34,10 @@ extension ApplePlatform {
 
 struct OSStatusError: Error {
     var osStatus: OSStatus
-    var description: String?
+    var _description: String?
     init(_ osStatus: OSStatus, description: String? = nil) {
         self.osStatus = osStatus
-        self.description = description
+        self._description = description
     }
     var osStatusLookupURL: String {
         "https://www.osstatus.com/search/results?platform=all&framework=all&search=\(osStatus)"
@@ -46,12 +46,16 @@ struct OSStatusError: Error {
         "OSStatus = \(osStatus) - \(osStatusLookupURL)"
     }
     var localizedDescription: String {
-        if let description = description {
+        if let description = _description {
             return "\(description) - \(osStatusDescription)"
         } else {
             return osStatusDescription
         }
     }
+}
+
+extension OSStatusError: CustomStringConvertible {
+    var description: String { localizedDescription }
 }
 
 extension OSStatusError {
