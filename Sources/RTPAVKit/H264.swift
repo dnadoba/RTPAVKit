@@ -126,7 +126,7 @@ public final class RTPH264Sender {
             codec: .h264,
             encoderSpecification: [
                 kVTCompressionPropertyKey_AllowFrameReordering: false,
-                
+                //kVTCompressionPropertyKey_MaxFrameDelayCount: 0, // did not work.  would still delay frames and reorder them
                 kVTCompressionPropertyKey_RealTime: true,
             ],
             imageBufferAttributes: nil)
@@ -148,6 +148,7 @@ public final class RTPH264Sender {
             try encoder.encodeFrame(imageBuffer: frame, presentationTimeStamp: presentationTimeStamp, duration: frameDuration, frameProperties: [
                 kVTEncodeFrameOptionKey_ForceKeyFrame: frameCount.isMultiple(of: 60),
             ])
+            //encoder.finishEncoding(untilPresenetationTimeStamp: presentationTimeStamp)
         } catch {
             print(error, #file, #line)
         }

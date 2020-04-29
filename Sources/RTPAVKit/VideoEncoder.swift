@@ -83,4 +83,7 @@ public final class VideoEncoder {
         
         return infoFlags
     }
+    public func finishEncoding(untilPresenetationTimeStamp: CMTime) {
+        VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: untilPresenetationTimeStamp)
+    }
 }
