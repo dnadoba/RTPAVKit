@@ -107,7 +107,7 @@ public final class RTPH264Sender {
     
     @discardableResult
     public func setupEncoderIfNeeded(width: Int, height: Int) -> VideoEncoder {
-        if let encoder = self.encoder, encoder.width == width, encoder.height == encoder.height {
+        if let encoder = self.encoder, encoder.width == width, encoder.height == height {
             return encoder
         }
         let encoderSpecification: NSDictionary = [
