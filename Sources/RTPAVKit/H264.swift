@@ -95,10 +95,12 @@ extension CVPixelBuffer {
 
 public final class RTPH264Sender {
     private let queue: DispatchQueue
+    private let collectionQueue: DispatchQueue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self).data-transfer-report-collection")
     private var encoder: VideoEncoder?
     private let connection: NWConnection
     private var rtpSerialzer: RTPSerialzer = .init(maxSizeOfPacket: 9216, synchronisationSource: RTPSynchronizationSource(rawValue: .random(in: UInt32.min...UInt32.max)))
     private lazy var h264Serialzer: H264.NALNonInterleavedPacketSerializer<Data> = .init(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
+    public var onCollectConnectionMetric: ((NWConnection.DataTransferReport) -> ())?
     public init(endpoint: NWEndpoint, targetQueue: DispatchQueue? = nil) {
         queue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self)", target: targetQueue)
         connection = NWConnection(to: endpoint, using: .udp)
@@ -167,17 +169,40 @@ public final class RTPH264Sender {
         let timestamp = UInt32(timestampValue - getTimestampValueOffset(for: timestampValue))
         sendNalus(nalus, timestamp: timestamp)
     }
+    var dataTransferReportCollectionInterval: TimeInterval = 1
+    var currentDataTransferReportStartTime: TimeInterval?
+    var currentDataTransferReport: NWConnection.PendingDataTransferReport?
+    private func now() -> TimeInterval {
+        ProcessInfo.processInfo.systemUptime
+    }
+    private func shouldStartNewDataTransferReportReport() -> Bool {
+        guard let currentDataTransferReportStartTime = currentDataTransferReportStartTime else { return true }
+        let elapsedSeconds = now() - currentDataTransferReportStartTime
+        return elapsedSeconds > dataTransferReportCollectionInterval
+    }
+    private func startAndCollectDataTransferReportIfNeeded() {
+        guard let onCollectConnectionMetric = onCollectConnectionMetric else { return }
+        guard shouldStartNewDataTransferReportReport() else { return }
+        let newDataTransferReport = connection.startDataTransferReport()
+        currentDataTransferReport?.collect(queue: collectionQueue, completion: { report in
+            onCollectConnectionMetric(report)
+        })
+        currentDataTransferReport = newDataTransferReport
+        currentDataTransferReportStartTime = now()
+    }
     private func sendNalus(_ nalus: [H264.NALUnit<Data>], timestamp: UInt32) {
         guard connection.maximumDatagramSize > 0 else { return }
         rtpSerialzer.maxSizeOfPacket = min(9216, connection.maximumDatagramSize)
         h264Serialzer.maxSizeOfNaluPacket = rtpSerialzer.maxSizeOfPayload
+        
+        startAndCollectDataTransferReportIfNeeded()
+        
         do {
             let packets = try h264Serialzer.serialize(nalus, timestamp: timestamp, lastNALUsForGivenTimestamp: true)
             connection.batch {
                 for packet in packets {
                     do {
                         let data: Data = try rtpSerialzer.serialze(packet)
-                        //print("send data of size = \(data.count) - max size of packet \(rtpSerialzer.maxSizeOfPacket)")
                         connection.send(content: data, completion: .idempotent)
                     } catch {
                         print(error, #file, #line)
