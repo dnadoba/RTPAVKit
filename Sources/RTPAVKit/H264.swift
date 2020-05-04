@@ -184,9 +184,17 @@ public final class RTPH264Sender {
         guard let onCollectConnectionMetric = onCollectConnectionMetric else { return }
         guard shouldStartNewDataTransferReportReport() else { return }
         let newDataTransferReport = connection.startDataTransferReport()
-        currentDataTransferReport?.collect(queue: collectionQueue, completion: { report in
-            onCollectConnectionMetric(report)
-        })
+        /// `.collection()` does crash if the interface is nil with error message:
+        /// ```
+        /// nw_data_transfer_report_copy_path_interface called with null (path_index < report->path_count)
+        /// ```
+        /// To reproduce this problem, connect to a Bonjour name that does not exists on the current network.
+        if connection.currentPath?.localEndpoint?.interface != nil {
+            
+            currentDataTransferReport?.collect(queue: collectionQueue, completion: { report in
+                onCollectConnectionMetric(report)
+            })
+        }
         currentDataTransferReport = newDataTransferReport
         currentDataTransferReportStartTime = now()
     }
