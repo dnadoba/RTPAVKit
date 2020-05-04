@@ -114,7 +114,7 @@ public final class RTPH264Sender {
         if let encoder = self.encoder, encoder.width == width, encoder.height == height {
             return encoder
         }
-        let encoderSpecification: NSDictionary = [
+        let encoderSpecification: NSMutableDictionary = [
             kVTCompressionPropertyKey_AllowFrameReordering: false,
             kVTCompressionPropertyKey_RealTime: true,
             kVTCompressionPropertyKey_MaximizePowerEfficiency: true,
@@ -209,21 +209,22 @@ public final class RTPH264Sender {
         
         do {
             let packets = try h264Serialzer.serialize(nalus, timestamp: timestamp, lastNALUsForGivenTimestamp: true)
+            let ipMetadata = NWProtocolIP.Metadata()
+            ipMetadata.serviceClass = .interactiveVideo
+            let context = NWConnection.ContentContext(
+                identifier: "RTP",
+                metadata: [ipMetadata]
+            )
             connection.batch {
                 for packet in packets {
                     do {
+                        
                         let data: Data = try rtpSerialzer.serialze(packet)
-                        let ipMetadata = NWProtocolIP.Metadata()
-                        ipMetadata.serviceClass = .interactiveVideo
-                        let context = NWConnection.ContentContext(
-                            identifier: "RTP",
-                            expiration: 0,
-                            priority: 0,
-                            isFinal: false,
-                            antecedent: nil,
-                            metadata: [ipMetadata]
-                        )
-                        connection.send(content: data, contentContext: context, completion: .idempotent)
+                        connection.send(content: data, contentContext: context, completion: .contentProcessed({ error in
+                            if let error = error {
+                                print(error)
+                            }
+                        }))
                     } catch {
                         print(error, #file, #line)
                     }
