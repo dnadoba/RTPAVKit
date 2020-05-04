@@ -97,13 +97,15 @@ public final class RTPH264Sender {
     private let queue: DispatchQueue
     private let collectionQueue: DispatchQueue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self).data-transfer-report-collection")
     private var encoder: VideoEncoder?
-    private let connection: NWConnection
+    private var connection: NWConnection
     private var rtpSerialzer: RTPSerialzer = .init(maxSizeOfPacket: 9216, synchronisationSource: RTPSynchronizationSource(rawValue: .random(in: UInt32.min...UInt32.max)))
     private lazy var h264Serialzer: H264.NALNonInterleavedPacketSerializer<Data> = .init(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
     public var onCollectConnectionMetric: ((NWConnection.DataTransferReport) -> ())?
     public init(endpoint: NWEndpoint, targetQueue: DispatchQueue? = nil) {
         queue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self)", target: targetQueue)
-        connection = NWConnection(to: endpoint, using: .udp)
+        let parameters = NWParameters.udp
+        parameters.includePeerToPeer = true
+        connection = NWConnection(to: endpoint, using: parameters)
         connection.start(queue: queue)
     }
     
@@ -211,7 +213,17 @@ public final class RTPH264Sender {
                 for packet in packets {
                     do {
                         let data: Data = try rtpSerialzer.serialze(packet)
-                        connection.send(content: data, completion: .idempotent)
+                        let ipMetadata = NWProtocolIP.Metadata()
+                        ipMetadata.serviceClass = .interactiveVideo
+                        let context = NWConnection.ContentContext(
+                            identifier: "RTP",
+                            expiration: 0,
+                            priority: 0,
+                            isFinal: false,
+                            antecedent: nil,
+                            metadata: [ipMetadata]
+                        )
+                        connection.send(content: data, contentContext: context, completion: .idempotent)
                     } catch {
                         print(error, #file, #line)
                     }
