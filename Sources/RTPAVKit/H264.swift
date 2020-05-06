@@ -51,6 +51,50 @@ public extension CMSampleBuffer {
         }
         return nalus
     }
+    @inlinable
+    func convertToH264NALUnitsUsingCMBlockBufferSlice() -> [H264.NALUnit<CMBlockBuffer.Slice>] {
+        var nalus: [H264.NALUnit<CMBlockBuffer.Slice>] = []
+        CMSampleBufferCallBlockForEachSample(self) { (buffer, count) -> OSStatus in
+            if let dataBuffer = buffer.dataBuffer, let formatDescription = formatDescription  {
+                do {
+                    let newNalus = try dataBuffer.withContiguousStorage { storage -> [H264.NALUnit<CMBlockBuffer.Slice>] in
+                        var reader = BinaryReader(bytes: storage)
+                        var newNalus = [H264.NALUnit<CMBlockBuffer.Slice>]()
+                        let nalUnitHeaderLength = formatDescription.nalUnitHeaderLength
+                        while !reader.isEmpty {
+                            let length = try reader.readInteger(byteCount: Int(nalUnitHeaderLength), type: UInt64.self)
+                            let header = try H264.NALUnitHeader(from: &reader)
+                            let payloadBuffer = try reader.readBytes(Int(length) - 1)
+                            let payload = dataBuffer[payloadBuffer.startIndex..<payloadBuffer.endIndex]
+                            newNalus.append(H264.NALUnit<CMBlockBuffer.Slice>(header: header, payload: payload))
+                        }
+                        return newNalus
+                    }
+                    nalus.append(contentsOf: newNalus)
+                } catch {
+                    print(error, #file, #line)
+                }
+            }
+            return KERN_SUCCESS
+        }
+        return []
+    }
+    @inlinable
+    func convertToH264NALUnitsUsingDispatchData() -> [H264.NALUnit<DispatchData>] {
+        convertToH264NALUnitsUsingCMBlockBufferSlice().map { nalu in
+            let payload = nalu.payload
+            var strongReference: CMBlockBuffer? = payload.owner
+            _ = strongReference // silence warning
+            var pointer: UnsafeMutablePointer<Int8>?
+            let status = CMBlockBufferGetDataPointer(payload.owner, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: nil, dataPointerOut: &pointer)
+            try! OSStatusError.check(status)
+            let buffer = UnsafeRawBufferPointer(start: pointer, count: payload.endIndex - payload.startIndex)
+            let newPayload = DispatchData(bytesNoCopy: buffer, deallocator: .custom(nil, {
+                strongReference = nil
+            }))
+            return H264.NALUnit(header: nalu.header, payload: newPayload)
+        }
+    }
 }
 
 public extension CMFormatDescription {
