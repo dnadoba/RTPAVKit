@@ -12,24 +12,6 @@ import SwiftRTP
 import BinaryKit
 import Network
 
-extension ReferenceInitalizeableData {
-    @inlinable
-    public init(referenceOrCopy: Slice<UnsafeRawBufferPointer>, deallocator: @escaping () -> ()) {
-        self.init(referenceOrCopy: UnsafeRawBufferPointer(rebasing: referenceOrCopy), deallocator: deallocator)
-    }
-}
-
-extension ReferenceInitalizeableData {
-    @inlinable
-    public init(referenceOrCopy: UnsafeBufferPointer<UInt8>, deallocator: @escaping () -> ()) {
-        self.init(referenceOrCopy: UnsafeRawBufferPointer(referenceOrCopy), deallocator: deallocator)
-    }
-    @inlinable
-    public init(referenceOrCopy: Slice<UnsafeBufferPointer<UInt8>>, deallocator: @escaping () -> ()) {
-        self.init(referenceOrCopy: UnsafeBufferPointer<UInt8>(rebasing: referenceOrCopy), deallocator: deallocator)
-    }
-}
-
 public extension CMSampleBuffer {
     @inlinable
     func convertToH264NALUnitsAndAddPPSAndSPSIfNeeded<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: DataProtocol, D.Index == Int, D: ReferenceInitalizeableData {
