@@ -12,9 +12,27 @@ import SwiftRTP
 import BinaryKit
 import Network
 
+extension ReferenceInitalizeableData {
+    @inlinable
+    public init(referenceOrCopy: Slice<UnsafeRawBufferPointer>, deallocator: @escaping () -> ()) {
+        self.init(referenceOrCopy: UnsafeRawBufferPointer(rebasing: referenceOrCopy), deallocator: deallocator)
+    }
+}
+
+extension ReferenceInitalizeableData {
+    @inlinable
+    public init(referenceOrCopy: UnsafeBufferPointer<UInt8>, deallocator: @escaping () -> ()) {
+        self.init(referenceOrCopy: UnsafeRawBufferPointer(referenceOrCopy), deallocator: deallocator)
+    }
+    @inlinable
+    public init(referenceOrCopy: Slice<UnsafeBufferPointer<UInt8>>, deallocator: @escaping () -> ()) {
+        self.init(referenceOrCopy: UnsafeBufferPointer<UInt8>(rebasing: referenceOrCopy), deallocator: deallocator)
+    }
+}
+
 public extension CMSampleBuffer {
     @inlinable
-    func convertToH264NALUnitsAndAddPPSAndSPSIfNeeded<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: MutableDataProtocol, D.Index == Int {
+    func convertToH264NALUnitsAndAddPPSAndSPSIfNeeded<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: DataProtocol, D.Index == Int, D: ReferenceInitalizeableData {
         var nalus = self.convertToH264NALUnits(dataType: D.self)
         if nalus.contains(where: { $0.header.type == H264.NALUnitType.instantaneousDecodingRefreshCodedSlice }),
             let formatDescription = self.formatDescription {
@@ -24,17 +42,7 @@ public extension CMSampleBuffer {
         return nalus
     }
     @inlinable
-    func convertToH264NALUnitsAndAddPPSAndSPSIfNeededUsingDispatchData() -> [H264.NALUnit<DispatchData>] {
-        var nalus = self.convertToH264NALUnitsUsingDispatchData()
-        if nalus.contains(where: { $0.header.type == H264.NALUnitType.instantaneousDecodingRefreshCodedSlice }),
-            let formatDescription = self.formatDescription {
-            let parameterSet = formatDescription.h264ParameterSetsAsDispatchData()
-            nalus.insert(contentsOf: parameterSet, at: 0)
-        }
-        return nalus
-    }
-    @inlinable
-    func convertToH264NALUnits<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: MutableDataProtocol, D.Index == Int {
+    func convertToH264NALUnits<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: DataProtocol, D.Index == Int, D: ReferenceInitalizeableData {
         var nalus = [H264.NALUnit<D>]()
         CMSampleBufferCallBlockForEachSample(self) { (buffer, count) -> OSStatus in
             if let dataBuffer = buffer.dataBuffer, let formatDescription = formatDescription  {
@@ -47,7 +55,10 @@ public extension CMSampleBuffer {
                         while !reader.isEmpty {
                             let length = try reader.readInteger(byteCount: Int(nalUnitHeaderLength), type: UInt64.self)
                             let header = try H264.NALUnitHeader(from: &reader)
-                            let payload = D(try reader.readBytes(Int(length) - 1))
+                            let payload = D(
+                                referenceOrCopy: try reader.readBytes(Int(length) - 1),
+                                deallocator: { [dataBuffer] in _ = dataBuffer }
+                            )
                             newNalus.append(H264.NALUnit<D>(header: header, payload: payload))
                         }
                         return newNalus
@@ -61,50 +72,6 @@ public extension CMSampleBuffer {
         }
         return nalus
     }
-    @inlinable
-    func convertToH264NALUnitsUsingCMBlockBufferSlice() -> [H264.NALUnit<CMBlockBuffer.Slice>] {
-        var nalus: [H264.NALUnit<CMBlockBuffer.Slice>] = []
-        CMSampleBufferCallBlockForEachSample(self) { (buffer, count) -> OSStatus in
-            if let dataBuffer = buffer.dataBuffer, let formatDescription = formatDescription  {
-                do {
-                    let newNalus = try dataBuffer.withContiguousStorage { storage -> [H264.NALUnit<CMBlockBuffer.Slice>] in
-                        var reader = BinaryReader(bytes: storage)
-                        var newNalus = [H264.NALUnit<CMBlockBuffer.Slice>]()
-                        let nalUnitHeaderLength = formatDescription.nalUnitHeaderLength
-                        while !reader.isEmpty {
-                            let length = try reader.readInteger(byteCount: Int(nalUnitHeaderLength), type: UInt64.self)
-                            let header = try H264.NALUnitHeader(from: &reader)
-                            let payloadBuffer = try reader.readBytes(Int(length) - 1)
-                            let payload = dataBuffer[payloadBuffer.startIndex..<payloadBuffer.endIndex]
-                            newNalus.append(H264.NALUnit<CMBlockBuffer.Slice>(header: header, payload: payload))
-                        }
-                        return newNalus
-                    }
-                    nalus.append(contentsOf: newNalus)
-                } catch {
-                    print(error, #file, #line)
-                }
-            }
-            return KERN_SUCCESS
-        }
-        return nalus
-    }
-    @inlinable
-    func convertToH264NALUnitsUsingDispatchData() -> [H264.NALUnit<DispatchData>] {
-        convertToH264NALUnitsUsingCMBlockBufferSlice().map { nalu in
-            let payload = nalu.payload
-            var strongReference: CMBlockBuffer? = payload.owner
-            _ = strongReference // silence warning
-            var pointer: UnsafeMutablePointer<Int8>?
-            let status = CMBlockBufferGetDataPointer(payload.owner, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: nil, dataPointerOut: &pointer)
-            try! OSStatusError.check(status)
-            let buffer = UnsafeRawBufferPointer(start: pointer?.advanced(by: payload.startIndex), count: payload.endIndex - payload.startIndex)
-            let newPayload = DispatchData(bytesNoCopy: buffer, deallocator: .custom(nil, {
-                strongReference = nil
-            }))
-            return H264.NALUnit(header: nalu.header, payload: newPayload)
-        }
-    }
 }
 
 public extension CMFormatDescription {
@@ -115,7 +82,7 @@ public extension CMFormatDescription {
         return nalUnitHeaderLength
     }
     @inlinable
-    func h264ParameterSets<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: MutableDataProtocol, D.Index == Int {
+    func h264ParameterSets<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: DataProtocol, D.Index == Int, D: ReferenceInitalizeableData {
         var nalus = [H264.NALUnit<D>]()
         var count = 0
         CMVideoFormatDescriptionGetH264ParameterSetAtIndex(self, parameterSetIndex: -1, parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &count, nalUnitHeaderLengthOut: nil)
@@ -127,7 +94,10 @@ public extension CMFormatDescription {
                 if let pointerOut = pointerOut {
                     let data = UnsafeBufferPointer(start: pointerOut, count: size)
                     var reader = BinaryReader(bytes: data)
-                    let nalu = H264.NALUnit(header: try .init(from: &reader), payload: D(try reader.readRemainingBytes()))
+                    let nalu = H264.NALUnit(
+                        header: try .init(from: &reader),
+                        payload: D(referenceOrCopy: try reader.readRemainingBytes(),
+                                   deallocator: { [self] in _ = self }))
                     nalus.append(nalu)
                 } else {
                     print("could not get H264ParameterSet")
@@ -137,12 +107,6 @@ public extension CMFormatDescription {
             }
         }
         return nalus
-    }
-    @inlinable
-    func h264ParameterSetsAsDispatchData() -> [H264.NALUnit<DispatchData>] {
-        h264ParameterSets(dataType: [UInt8].self).map { nalu in
-            return H264.NALUnit(header: nalu.header, payload: DispatchData(copyBytes: nalu.payload))
-        }
     }
 }
 
@@ -242,7 +206,7 @@ public final class RTPH264Sender {
         sendNalus(nalus, timestamp: timestamp)
     }
     private func sendBufferUsingDispatchData(_ sampleBuffer: CMSampleBuffer) {
-        let nalus = sampleBuffer.convertToH264NALUnitsAndAddPPSAndSPSIfNeededUsingDispatchData()
+        let nalus = sampleBuffer.convertToH264NALUnits(dataType: DispatchData.self)
         let timestampValue = sampleBuffer.presentationTimeStamp.convertScale(90_000, method: .default).value
         let timestamp = UInt32(timestampValue - getTimestampValueOffset(for: timestampValue))
         sendNalusUsingDispatchData(nalus, timestamp: timestamp)
