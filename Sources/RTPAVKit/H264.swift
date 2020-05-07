@@ -87,7 +87,7 @@ public extension CMSampleBuffer {
             }
             return KERN_SUCCESS
         }
-        return []
+        return nalus
     }
     @inlinable
     func convertToH264NALUnitsUsingDispatchData() -> [H264.NALUnit<DispatchData>] {
@@ -98,7 +98,7 @@ public extension CMSampleBuffer {
             var pointer: UnsafeMutablePointer<Int8>?
             let status = CMBlockBufferGetDataPointer(payload.owner, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: nil, dataPointerOut: &pointer)
             try! OSStatusError.check(status)
-            let buffer = UnsafeRawBufferPointer(start: pointer, count: payload.endIndex - payload.startIndex)
+            let buffer = UnsafeRawBufferPointer(start: pointer?.advanced(by: payload.startIndex), count: payload.endIndex - payload.startIndex)
             let newPayload = DispatchData(bytesNoCopy: buffer, deallocator: .custom(nil, {
                 strongReference = nil
             }))
@@ -206,7 +206,7 @@ public final class RTPH264Sender {
             imageBufferAttributes: nil)
         
         encoder.callback = { [weak self] buffer, flags in
-            self?.sendBufferUsingDispatchData(buffer)
+            self?.sendBuffer(buffer)
         }
         
         self.encoder = encoder
