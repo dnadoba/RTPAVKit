@@ -36,6 +36,7 @@ extension ApplePlatform {
 struct OSStatusError: Error {
     var osStatus: OSStatus
     var _description: String?
+    @usableFromInline
     init(_ osStatus: OSStatus, description: String? = nil) {
         self.osStatus = osStatus
         self._description = description

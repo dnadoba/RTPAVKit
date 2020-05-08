@@ -14,6 +14,10 @@ import Network
 
 // MARK: - CMSampleBuffer to NALUnit
 
+public enum SampleBufferToNALUnitConvertError: Error {
+    case lengthHeaderIsSmallerThanOne
+}
+
 public extension CMSampleBuffer {
     @inlinable
     func convertToH264NALUnitsAndAddPPSAndSPSIfNeeded<D>(dataType: D.Type = D.self) -> [H264.NALUnit<D>] where D: DataProtocol, D.Index == Int, D: ReferenceInitalizeableData {
@@ -31,13 +35,21 @@ public extension CMSampleBuffer {
         CMSampleBufferCallBlockForEachSample(self) { (buffer, count) -> OSStatus in
             if let dataBuffer = buffer.dataBuffer, let formatDescription = formatDescription  {
                 do {
-                    let newNalus = try dataBuffer.withContiguousStorage { storage -> [H264.NALUnit<D>] in
-                        let storage = storage.bindMemory(to: UInt8.self)
+                    var length = 0
+                    var pointer: UnsafeMutablePointer<Int8>?
+                    let status = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: &length, totalLengthOut: nil, dataPointerOut: &pointer)
+                    guard OSStatusError.isSuccessfull(status), let unwrappedPointer = pointer else {
+                        throw OSStatusError(status, description: "CMBlockBufferGetDataPointer failed")
+                    }
+                    
+                    let newNalus = try unwrappedPointer.withMemoryRebound(to: UInt8.self, capacity: length) { (pointer) -> [H264.NALUnit<D>] in
+                        let storage = UnsafeBufferPointer(start: pointer, count: length)
                         var reader = BinaryReader(bytes: storage)
                         var newNalus = [H264.NALUnit<D>]()
                         let nalUnitHeaderLength = formatDescription.nalUnitHeaderLength
                         while !reader.isEmpty {
                             let length = try reader.readInteger(byteCount: Int(nalUnitHeaderLength), type: UInt64.self)
+                            guard length >= 1 else { throw SampleBufferToNALUnitConvertError.lengthHeaderIsSmallerThanOne }
                             let header = try H264.NALUnitHeader(from: &reader)
                             let payload = D(
                                 referenceOrCopy: try reader.readBytes(Int(length) - 1),
@@ -47,6 +59,7 @@ public extension CMSampleBuffer {
                         }
                         return newNalus
                     }
+                    
                     nalus.append(contentsOf: newNalus)
                 } catch {
                     print(error, #file, #line)
@@ -290,7 +303,7 @@ enum SampleBufferError: Error {
 }
 
 extension H264.NALUnit where D == Data {
-    func sampleBuffer(formatDescription: CMFormatDescription, time: CMTime, duration: CMTime = .invalid) throws -> CMSampleBuffer {
+    public func sampleBuffer(formatDescription: CMFormatDescription, time: CMTime, duration: CMTime = .invalid) throws -> CMSampleBuffer {
         // Prepend the size of the data to the data as a 32-bit network endian uint. (keyword: "elementary stream")
         let offset = 0
         let size = UInt32((self.payload.count - offset) + 1)
