@@ -187,12 +187,6 @@ public final class RTPH264Sender {
         let timestamp = UInt32(timestampValue - getTimestampValueOffset(for: timestampValue))
         sendNalus(nalus, timestamp: timestamp)
     }
-    private func sendBufferUsingDispatchData(_ sampleBuffer: CMSampleBuffer) {
-        let nalus = sampleBuffer.convertToH264NALUnits(dataType: DispatchData.self)
-        let timestampValue = sampleBuffer.presentationTimeStamp.convertScale(90_000, method: .default).value
-        let timestamp = UInt32(timestampValue - getTimestampValueOffset(for: timestampValue))
-        sendNalusUsingDispatchData(nalus, timestamp: timestamp)
-    }
     var dataTransferReportCollectionInterval: TimeInterval = 1
     var currentDataTransferReportStartTime: TimeInterval?
     var currentDataTransferReport: NWConnection.PendingDataTransferReport?
@@ -223,40 +217,6 @@ public final class RTPH264Sender {
         currentDataTransferReportStartTime = now()
     }
     private func sendNalus(_ nalus: [H264.NALUnit<MutableData>], timestamp: UInt32) {
-        guard connection.maximumDatagramSize > 0 else { return }
-        rtpSerialzer.maxSizeOfPacket = min(9216, connection.maximumDatagramSize)
-        h264Serialzer.maxSizeOfNaluPacket = rtpSerialzer.maxSizeOfPayload
-        
-        startAndCollectDataTransferReportIfNeeded()
-        
-        do {
-            let packets = try h264Serialzer.serialize(nalus, timestamp: timestamp, lastNALUsForGivenTimestamp: true)
-            let ipMetadata = NWProtocolIP.Metadata()
-            ipMetadata.serviceClass = .interactiveVideo
-            let context = NWConnection.ContentContext(
-                identifier: "RTP",
-                metadata: [ipMetadata]
-            )
-            connection.batch {
-                for packet in packets {
-                    do {
-                        
-                        let data: MutableData = try rtpSerialzer.serialze(packet)
-                        connection.send(content: data, contentContext: context, completion: .contentProcessed({ error in
-                            if let error = error {
-                                print(error)
-                            }
-                        }))
-                    } catch {
-                        print(error, #file, #line)
-                    }
-                }
-            }
-        } catch {
-            print(error, #file, #line)
-        }
-    }
-    private func sendNalusUsingDispatchData(_ nalus: [H264.NALUnit<DispatchData>], timestamp: UInt32) {
         guard connection.maximumDatagramSize > 0 else { return }
         rtpSerialzer.maxSizeOfPacket = min(9216, connection.maximumDatagramSize)
         h264Serialzer.maxSizeOfNaluPacket = rtpSerialzer.maxSizeOfPayload
