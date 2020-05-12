@@ -14,9 +14,10 @@ final class H264PerformanceTests: XCTestCase {
     let maxDatagramSize = 1500
     let idrSize = 30 * 1000 * 1000
     func testData() throws {
+        typealias IntermediateData = [UInt8]
         typealias DataType = Data
         var rtpSerialzer = RTPSerialzer(maxSizeOfPacket: maxDatagramSize, synchronisationSource: RTPSynchronizationSource(rawValue: 1))
-        let h264Serialzer = H264.NALNonInterleavedPacketSerializer<DataType>(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
+        let h264Serialzer = H264.NALNonInterleavedPacketSerializer<IntermediateData, DataType>(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
         
         let sample = try getTypicialCMSampleBuffer(idrSize: idrSize)
         measure {
@@ -32,9 +33,10 @@ final class H264PerformanceTests: XCTestCase {
         }
     }
     func testDispatchData() throws {
+        typealias IntermediateData = [UInt8]
         typealias DataType = DispatchData
         var rtpSerialzer = RTPSerialzer(maxSizeOfPacket: maxDatagramSize, synchronisationSource: RTPSynchronizationSource(rawValue: 1))
-        let h264Serialzer = H264.NALNonInterleavedPacketSerializer<DataType>(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
+        let h264Serialzer = H264.NALNonInterleavedPacketSerializer<IntermediateData, DataType>(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
         
         let sample = try getTypicialCMSampleBuffer(idrSize: idrSize)
         measure {
@@ -50,9 +52,10 @@ final class H264PerformanceTests: XCTestCase {
         }
     }
     func testUInt8Array() throws {
+        typealias IntermediateData = [UInt8]
         typealias DataType = [UInt8]
         var rtpSerialzer = RTPSerialzer(maxSizeOfPacket: maxDatagramSize, synchronisationSource: RTPSynchronizationSource(rawValue: 1))
-        let h264Serialzer = H264.NALNonInterleavedPacketSerializer<DataType>(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
+        let h264Serialzer = H264.NALNonInterleavedPacketSerializer<IntermediateData, DataType>(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
         
         let sample = try getTypicialCMSampleBuffer(idrSize: idrSize)
         measure {

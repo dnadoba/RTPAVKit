@@ -117,13 +117,14 @@ extension CVPixelBuffer {
 }
 
 public final class RTPH264Sender {
-    public typealias MutableData = [UInt8]
+    public typealias IntermediateData = [UInt8]
+    public typealias PayloadData = DispatchData
     private let queue: DispatchQueue
     private let collectionQueue: DispatchQueue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self).data-transfer-report-collection")
     private var encoder: VideoEncoder?
     private var connection: NWConnection
     private var rtpSerialzer: RTPSerialzer = .init(maxSizeOfPacket: 9216, synchronisationSource: RTPSynchronizationSource(rawValue: .random(in: UInt32.min...UInt32.max)))
-    private lazy var h264Serialzer: H264.NALNonInterleavedPacketSerializer<MutableData> = .init(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
+    private lazy var h264Serialzer: H264.NALNonInterleavedPacketSerializer<IntermediateData, PayloadData> = .init(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
     public var onCollectConnectionMetric: ((NWConnection.DataTransferReport) -> ())?
     public init(endpoint: NWEndpoint, targetQueue: DispatchQueue? = nil) {
         queue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self)", target: targetQueue)
@@ -190,7 +191,7 @@ public final class RTPH264Sender {
         return firstTimestampValue
     }
     private func sendBuffer(_ sampleBuffer: CMSampleBuffer) {
-        let nalus = sampleBuffer.convertToH264NALUnitsAndAddPPSAndSPSIfNeeded(dataType: MutableData.self)
+        let nalus = sampleBuffer.convertToH264NALUnitsAndAddPPSAndSPSIfNeeded(dataType: PayloadData.self)
         let timestampValue = sampleBuffer.presentationTimeStamp.convertScale(90_000, method: .default).value
         let timestamp = UInt32(timestampValue - getTimestampValueOffset(for: timestampValue))
         sendNalus(nalus, timestamp: timestamp)
@@ -224,7 +225,7 @@ public final class RTPH264Sender {
         currentDataTransferReport = newDataTransferReport
         currentDataTransferReportStartTime = now()
     }
-    private func sendNalus(_ nalus: [H264.NALUnit<MutableData>], timestamp: UInt32) {
+    private func sendNalus(_ nalus: [H264.NALUnit<PayloadData>], timestamp: UInt32) {
         guard connection.maximumDatagramSize > 0 else { return }
         rtpSerialzer.maxSizeOfPacket = min(9216, connection.maximumDatagramSize)
         h264Serialzer.maxSizeOfNaluPacket = rtpSerialzer.maxSizeOfPayload
@@ -243,7 +244,7 @@ public final class RTPH264Sender {
                 for packet in packets {
                     do {
                         
-                        let data: MutableData = try rtpSerialzer.serialze(packet)
+                        let data: PayloadData = try rtpSerialzer.serialze(packet)
                         connection.send(content: data, contentContext: context, completion: .contentProcessed({ error in
                             if let error = error {
                                 print(error)
