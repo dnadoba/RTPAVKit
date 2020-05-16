@@ -466,23 +466,29 @@ public final class RTPH264Reciever {
         }
     }
     private var h264Parser = H264.NALNonInterleavedPacketParser<Data>()
-    var prevSequenceNumber: UInt16?
+    var prevSequenceNumber: SerialNumber<UInt16>?
     private func parse(_ data: Data) throws {
         var reader = BinaryReader(bytes: data)
         let header = try RTPHeader(from: &reader)
         defer { prevSequenceNumber = header.sequenceNumber }
         if let prevSequenceNumber = prevSequenceNumber,
-        prevSequenceNumber >= header.sequenceNumber && prevSequenceNumber != UInt16.max {
+            prevSequenceNumber >= header.sequenceNumber {
             print("packets in wrong order prevSequenceNumber: \(prevSequenceNumber) current: \(header.sequenceNumber)")
+            resetH264Parser()
         }
         if let prevSequenceNumber = prevSequenceNumber,
-            abs(Int(header.sequenceNumber) - Int(prevSequenceNumber)) != 1 {
+            header.sequenceNumber != (prevSequenceNumber + 1) {
             print("packet lost prevSequenceNumber: \(prevSequenceNumber) current: \(header.sequenceNumber)")
+            resetH264Parser()
         }
         let nalUnits = try h264Parser.readPackage(from: &reader)
         if !nalUnits.isEmpty {
             didReciveNALUnits(nalUnits, header: header)
         }
+    }
+    
+    private func resetH264Parser() {
+        h264Parser = .init()
     }
     
     private var sequenceParameterSet: H264.NALUnit<Data>? {
