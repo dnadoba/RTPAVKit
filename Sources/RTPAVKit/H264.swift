@@ -522,7 +522,9 @@ public final class RTPH264Reciever {
                     pictureParameterSet: pictureParameterSet
                 )
                 self.formatDescription = formatDescription
-                didRecieveFormatDescription?(formatDescription)
+                formatDescription.map { formatDescription in
+                    didRecieveFormatDescription?(formatDescription)
+                }
             } catch {
                 print(error)
             }
