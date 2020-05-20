@@ -416,7 +416,7 @@ public final class VideoDecoder {
 
 public final class RTPH264Reciever {
     public typealias SampleBufferCallback = (CMSampleBuffer) -> ()
-    public typealias FormatDescriptinoCallback = (CMSampleBuffer) -> ()
+    public typealias FormatDescriptinoCallback = (CMVideoFormatDescription) -> ()
     var connection: NWConnection?
     let queue = DispatchQueue(label: "de.nadoba.\(RTPH264Reciever.self).udp")
     let listen: NWListener
