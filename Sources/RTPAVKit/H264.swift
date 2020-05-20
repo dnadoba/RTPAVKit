@@ -415,11 +415,13 @@ public final class VideoDecoder {
 }
 
 public final class RTPH264Reciever {
-    public typealias Callback = (CMSampleBuffer) -> ()
+    public typealias SampleBufferCallback = (CMSampleBuffer) -> ()
+    public typealias FormatDescriptinoCallback = (CMSampleBuffer) -> ()
     var connection: NWConnection?
     let queue = DispatchQueue(label: "de.nadoba.\(RTPH264Reciever.self).udp")
     let listen: NWListener
-    public var callback: Callback?
+    public var didRecieveSampleBuffer: SampleBufferCallback?
+    public var didRecieveFormatDescription: FormatDescriptinoCallback?
     private var timeManager: VideoPresentationTimeManager
     public init(host: NWEndpoint.Host, port: NWEndpoint.Port, timebase: CMTimebase) {
         timeManager = .init(timebase: timebase)
@@ -506,7 +508,6 @@ public final class RTPH264Reciever {
         }
     }
     private var formatDescription: CMVideoFormatDescription?
-    private var decoder: VideoDecoder?
     
     private func didReciveNALUnits(_ nalus: [H264.NALUnit<Data>], header: RTPHeader) {
         for nalu in nalus {
@@ -521,15 +522,7 @@ public final class RTPH264Reciever {
                     pictureParameterSet: pictureParameterSet
                 )
                 self.formatDescription = formatDescription
-                if let newFormatDescription = formatDescription {
-                    if let decoder = decoder {
-                        if !decoder.canAcceptFormatDescription(newFormatDescription) {
-                            self.decoder = try VideoDecoder(formatDescription: newFormatDescription)
-                        }
-                    } else {
-                        self.decoder = try VideoDecoder(formatDescription: newFormatDescription)
-                    }
-                }
+                didRecieveFormatDescription?(formatDescription)
             } catch {
                 print(error)
             }
@@ -558,11 +551,7 @@ public final class RTPH264Reciever {
         let presentationTime = timeManager.getPresentationTime(for: Int64(header.timestamp))
         do {
             let buffer = try nalu.sampleBuffer(formatDescription: formatDescription, time: presentationTime, duration: .invalid)
-            if let callback = callback {
-                callback(buffer)
-            } else {
-                try self.decoder?.decodeFrame(sampleBuffer: buffer, flags: [._1xRealTimePlayback, ._EnableAsynchronousDecompression])
-            }
+            didRecieveSampleBuffer?(buffer)
         } catch {
             print(error)
         }
