@@ -368,22 +368,26 @@ extension H264.NALUnit where D == Data {
 
 public final class VideoDecoder {
     public typealias Callback = (_ imageBuffer: CVPixelBuffer?, _ presentationTimeStamp: CMTime, _ presentationDuration: CMTime) -> ()
-    fileprivate var session: VTDecompressionSession
+    fileprivate var session: VTDecompressionSession!
     public var callback: Callback?
     public init(formatDescription: CMVideoFormatDescription) throws {
         var session: VTDecompressionSession?
+        let ptr = Unmanaged.passUnretained(self).toOpaque()
         let callback = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: { (decompressionOutputRefCon, sourceFrameRefCon, status, infoFlags, imageBuffer, presentationTimeStamp, presentationDuration) in
+            decompressionOutputCallback: { (selfPointer, sourceFrameRefCon, status, infoFlags, imageBuffer, presentationTimeStamp, presentationDuration) in
+                let mySelf = Unmanaged<VideoDecoder>.fromOpaque(UnsafeRawPointer(selfPointer!)).takeUnretainedValue()
                 do {
-                    try OSStatusError.check(status, errorDescription: "VTDecompressionOutputCallbackRecord")
+                    try OSStatusError.check(status, errorDescription: "VTDecompressionOutputCallbackRecorddecompressionOutputCallback")
                 } catch {
                     print(error)
                 }
+                mySelf.decompressionOutputCallback(imageBuffer: imageBuffer, presentationTimeStamp: presentationTimeStamp, presentationDuration: presentationDuration)
         },
-            decompressionOutputRefCon: nil)
+            decompressionOutputRefCon: ptr)
         let status = withUnsafePointer(to: callback) { (callbackPointer) in
             VTDecompressionSessionCreate(
-                allocator: nil, formatDescription: formatDescription,
+                allocator: nil,
+                formatDescription: formatDescription,
                 decoderSpecification: nil,
                 imageBufferAttributes: nil,
                 outputCallback: callbackPointer, decompressionSessionOut: &session)
@@ -632,38 +636,41 @@ public struct VideoPresentationTimeManager {
         self.remoteStartTime = time
         self.localStartTime = nil
     }
+//    public mutating func getPresentationTime(for timestamp: Int64) -> CMTime {
+//        let time = makeTime(from: timestamp)
+//        var timeOffset = getRemoteOffset(for: time)
+//        defer { prevOffset = timeOffset }
+//        // reset offset if needed
+//        if let prevOffset = prevOffset {
+//            let difference = abs(timeOffset.seconds - prevOffset.seconds)
+//            if difference > 1 {
+//                resetRemoteStart(to: time)
+//                timeOffset = .zero
+//            }
+//        }
+//        let localStartTime: CMTime = {
+//            guard let localStartTime = self.localStartTime else {
+//                let now = timebase.time.convertScale(timescale, method: .default)
+//                self.localStartTime = now
+//                return now
+//            }
+//            return localStartTime
+//        }()
+//        let localTimestamp = localStartTime + timeOffset
+//        //let absDrif = (localTimestamp + getDelay() - timebase.time).seconds
+//
+//        //print("drift", absDrif * 1000, "ms")
+//        let currentDelay = getDelay().seconds
+//        //print("currentDelay:", currentDelay * 1000, "ms")
+//        let destinationDelay = (timebase.time - localTimestamp).seconds + 0.016
+//        let newDelay = currentDelay.interpolatedValue(to: destinationDelay, at: 0.05)
+//
+//
+//        bufferDelay = CMTime(seconds: newDelay, preferredTimescale: timescale)
+//        return localTimestamp + getDelay()
+//        //return timebase.time
+//    }
     public mutating func getPresentationTime(for timestamp: Int64) -> CMTime {
-        let time = makeTime(from: timestamp)
-        var timeOffset = getRemoteOffset(for: time)
-        defer { prevOffset = timeOffset }
-        // reset offset if needed
-        if let prevOffset = prevOffset {
-            let difference = abs(timeOffset.seconds - prevOffset.seconds)
-            if difference > 1 {
-                resetRemoteStart(to: time)
-                timeOffset = .zero
-            }
-        }
-        let localStartTime: CMTime = {
-            guard let localStartTime = self.localStartTime else {
-                let now = timebase.time.convertScale(timescale, method: .default)
-                self.localStartTime = now
-                return now
-            }
-            return localStartTime
-        }()
-        let localTimestamp = localStartTime + timeOffset
-        //let absDrif = (localTimestamp + getDelay() - timebase.time).seconds
-        
-        //print("drift", absDrif * 1000, "ms")
-        let currentDelay = getDelay().seconds
-        //print("currentDelay:", currentDelay * 1000, "ms")
-        let destinationDelay = (timebase.time - localTimestamp).seconds + 0.016
-        let newDelay = currentDelay.interpolatedValue(to: destinationDelay, at: 0.05)
-        
-        
-        bufferDelay = CMTime(seconds: newDelay, preferredTimescale: timescale)
-        return localTimestamp + getDelay()
-        //return timebase.time
+        CMClockGetHostTimeClock().time
     }
 }
