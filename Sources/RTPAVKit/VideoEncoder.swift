@@ -76,7 +76,7 @@ public final class VideoEncoder {
         frameProperties: NSDictionary? = nil
     ) throws -> VTEncodeInfoFlags {
         var infoFlags = VTEncodeInfoFlags()
-        
+        VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: presentationTimeStamp)
         let status = VTCompressionSessionEncodeFrame(session, imageBuffer: imageBuffer, presentationTimeStamp: presentationTimeStamp, duration: duration, frameProperties: frameProperties, sourceFrameRefcon: nil, infoFlagsOut: &infoFlags)
         try OSStatusError.check(status,
                                 errorDescription: "failed to encode frame \(imageBuffer) presentationTimeStamp: \(presentationTimeStamp) duration\(duration) frameProperties \(frameProperties as Any) info flags: \(infoFlags)")
