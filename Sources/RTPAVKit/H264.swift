@@ -135,30 +135,29 @@ public final class RTPH264Sender {
     }
     
     @discardableResult
-    public func setupEncoderIfNeeded(width: Int, height: Int) -> VideoEncoder {
+    public func setupEncoderIfNeeded(width: Int, height: Int) throws -> VideoEncoder {
         if let encoder = self.encoder, encoder.width == width, encoder.height == height {
             return encoder
         }
-        let encoderSpecification: NSMutableDictionary = [
-            kVTCompressionPropertyKey_AllowFrameReordering: false,
-            kVTCompressionPropertyKey_RealTime: true,
-            kVTCompressionPropertyKey_MaximizePowerEfficiency: true,
-        ]
         
         #if os(macOS)
-        encoderSpecification.setValue(true, forKey: kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String)
+        let encoderSpecification = EncoderSpecification(
+            requireHardwareAcceleratedVideoEncoder: true,
+            enableHardwareAcceleratedVideoEncoder: true
+        )
+        #else
+        let encoderSpecification = EncoderSpecification()
         #endif
         
-        let encoder = try! VideoEncoder(
+        let encoder = try VideoEncoder(
             width: width,
             height: height,
             codec: .h264,
-            encoderSpecification: [
-                kVTCompressionPropertyKey_AllowFrameReordering: false,
-                //kVTCompressionPropertyKey_MaxFrameDelayCount: 0, // did not work.  would still delay frames and reorder them
-                kVTCompressionPropertyKey_RealTime: true,
-            ],
-            imageBufferAttributes: nil)
+            encoderSpecification: encoderSpecification)
+        
+        encoder.allowFrameReordering = false
+        encoder.maximizePowerEfficiency = true
+        encoder.realTime = true
         
         encoder.callback = { [weak self] buffer, flags in
             self?.sendBuffer(buffer)
@@ -173,7 +172,7 @@ public final class RTPH264Sender {
     public func encodeAndSendFrame(_ frame: CVPixelBuffer, presentationTimeStamp: CMTime, frameDuration: CMTime) {
         frameCount += 1
         do {
-            let encoder = setupEncoderIfNeeded(width: frame.width, height: frame.height)
+            let encoder = try setupEncoderIfNeeded(width: frame.width, height: frame.height)
             try encoder.encodeFrame(imageBuffer: frame, presentationTimeStamp: presentationTimeStamp, duration: frameDuration, frameProperties: [
                 kVTEncodeFrameOptionKey_ForceKeyFrame: frameCount.isMultiple(of: 60),
             ])
