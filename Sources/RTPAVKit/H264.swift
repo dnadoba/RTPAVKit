@@ -156,7 +156,6 @@ public final class RTPH264Sender {
             encoderSpecification: encoderSpecification)
         
         encoder.allowFrameReordering = false
-        encoder.maximizePowerEfficiency = true
         encoder.realTime = true
         
         encoder.callback = { [weak self] buffer, flags in
@@ -174,7 +173,7 @@ public final class RTPH264Sender {
         do {
             let encoder = try setupEncoderIfNeeded(width: frame.width, height: frame.height)
             try encoder.encodeFrame(imageBuffer: frame, presentationTimeStamp: presentationTimeStamp, duration: frameDuration, frameProperties: [
-                kVTEncodeFrameOptionKey_ForceKeyFrame: frameCount.isMultiple(of: 60),
+                kVTEncodeFrameOptionKey_ForceKeyFrame: frameCount.isMultiple(of: 60*10),
             ])
         } catch {
             print(error, #file, #line)
@@ -466,6 +465,7 @@ public final class RTPH264Reciever {
         do {
             try parse(data)
         } catch {
+            resetH264Parser()
             print(error)
         }
     }
@@ -634,41 +634,41 @@ public struct VideoPresentationTimeManager {
         self.remoteStartTime = time
         self.localStartTime = nil
     }
-//    public mutating func getPresentationTime(for timestamp: Int64) -> CMTime {
-//        let time = makeTime(from: timestamp)
-//        var timeOffset = getRemoteOffset(for: time)
-//        defer { prevOffset = timeOffset }
-//        // reset offset if needed
-//        if let prevOffset = prevOffset {
-//            let difference = abs(timeOffset.seconds - prevOffset.seconds)
-//            if difference > 1 {
-//                resetRemoteStart(to: time)
-//                timeOffset = .zero
-//            }
-//        }
-//        let localStartTime: CMTime = {
-//            guard let localStartTime = self.localStartTime else {
-//                let now = timebase.time.convertScale(timescale, method: .default)
-//                self.localStartTime = now
-//                return now
-//            }
-//            return localStartTime
-//        }()
-//        let localTimestamp = localStartTime + timeOffset
-//        //let absDrif = (localTimestamp + getDelay() - timebase.time).seconds
-//
-//        //print("drift", absDrif * 1000, "ms")
-//        let currentDelay = getDelay().seconds
-//        //print("currentDelay:", currentDelay * 1000, "ms")
-//        let destinationDelay = (timebase.time - localTimestamp).seconds + 0.016
-//        let newDelay = currentDelay.interpolatedValue(to: destinationDelay, at: 0.05)
-//
-//
-//        bufferDelay = CMTime(seconds: newDelay, preferredTimescale: timescale)
-//        return localTimestamp + getDelay()
-//        //return timebase.time
-//    }
     public mutating func getPresentationTime(for timestamp: Int64) -> CMTime {
-        CMClockGetHostTimeClock().time
+        let time = makeTime(from: timestamp)
+        var timeOffset = getRemoteOffset(for: time)
+        defer { prevOffset = timeOffset }
+        // reset offset if needed
+        if let prevOffset = prevOffset {
+            let difference = abs(timeOffset.seconds - prevOffset.seconds)
+            if difference > 1 {
+                resetRemoteStart(to: time)
+                timeOffset = .zero
+            }
+        }
+        let localStartTime: CMTime = {
+            guard let localStartTime = self.localStartTime else {
+                let now = timebase.time.convertScale(timescale, method: .default)
+                self.localStartTime = now
+                return now
+            }
+            return localStartTime
+        }()
+        let localTimestamp = localStartTime + timeOffset
+        //let absDrif = (localTimestamp + getDelay() - timebase.time).seconds
+
+        //print("drift", absDrif * 1000, "ms")
+        let currentDelay = getDelay().seconds
+        //print("currentDelay:", currentDelay * 1000, "ms")
+        let destinationDelay = (timebase.time - localTimestamp).seconds + 0.016
+        let newDelay = currentDelay.interpolatedValue(to: destinationDelay, at: 0.05)
+
+
+        bufferDelay = CMTime(seconds: newDelay, preferredTimescale: timescale)
+        return localTimestamp + getDelay()
+        //return timebase.time
     }
+//    public mutating func getPresentationTime(for timestamp: Int64) -> CMTime {
+//        CMClockGetHostTimeClock().time
+//    }
 }
