@@ -126,14 +126,11 @@ public final class RTPH264Sender {
     private var rtpSerialzer: RTPSerialzer = .init(maxSizeOfPacket: 9216, synchronisationSource: RTPSynchronizationSource(rawValue: .random(in: UInt32.min...UInt32.max)))
     private lazy var h264Serialzer: H264.NALNonInterleavedPacketSerializer<IntermediateData, PayloadData> = .init(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
     public var onCollectConnectionMetric: ((NWConnection.DataTransferReport) -> ())?
-    public init(endpoint: NWEndpoint, targetQueue: DispatchQueue? = nil) {
-        queue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self)", target: targetQueue)
-        let parameters = NWParameters.udp
-        parameters.includePeerToPeer = true
-        connection = NWConnection(to: endpoint, using: parameters)
-        connection.start(queue: queue)
+
+    public init(connection: NWConnection, queue: DispatchQueue) {
+        self.queue = queue
+        self.connection = connection
     }
-    
     @discardableResult
     public func setupEncoderIfNeeded(width: Int, height: Int) throws -> VideoEncoder {
         if let encoder = self.encoder, encoder.width == width, encoder.height == height {
@@ -166,21 +163,21 @@ public final class RTPH264Sender {
         return encoder
     }
     
-    var frameCount: Int = 0
+    private var frameCount: Int = 0
     
     public func encodeAndSendFrame(_ frame: CVPixelBuffer, presentationTimeStamp: CMTime, frameDuration: CMTime) {
         frameCount += 1
         do {
             let encoder = try setupEncoderIfNeeded(width: frame.width, height: frame.height)
             try encoder.encodeFrame(imageBuffer: frame, presentationTimeStamp: presentationTimeStamp, duration: frameDuration, frameProperties: [
-                kVTEncodeFrameOptionKey_ForceKeyFrame: frameCount.isMultiple(of: 60*10),
+                kVTEncodeFrameOptionKey_ForceKeyFrame: frameCount.isMultiple(of: 30),
             ])
         } catch {
             print(error, #file, #line)
         }
     }
-    var firstTimestampValue: Int64?
-    func getTimestampValueOffset(for timestampValue: Int64) -> Int64 {
+    private var firstTimestampValue: Int64?
+    private func getTimestampValueOffset(for timestampValue: Int64) -> Int64 {
         guard let firstTimestampValue = firstTimestampValue else {
             self.firstTimestampValue = timestampValue
             return timestampValue
@@ -193,9 +190,9 @@ public final class RTPH264Sender {
         let timestamp = UInt32(timestampValue - getTimestampValueOffset(for: timestampValue))
         sendNalus(nalus, timestamp: timestamp)
     }
-    var dataTransferReportCollectionInterval: TimeInterval = 1
-    var currentDataTransferReportStartTime: TimeInterval?
-    var currentDataTransferReport: NWConnection.PendingDataTransferReport?
+    private var dataTransferReportCollectionInterval: TimeInterval = 1
+    private var currentDataTransferReportStartTime: TimeInterval?
+    private var currentDataTransferReport: NWConnection.PendingDataTransferReport?
     private func now() -> TimeInterval {
         ProcessInfo.processInfo.systemUptime
     }
