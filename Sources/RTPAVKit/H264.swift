@@ -412,32 +412,58 @@ public final class VideoDecoder {
     }
 }
 
-public final class RTPH264Reciever {
-    public typealias SampleBufferCallback = (CMSampleBuffer) -> ()
-    public typealias FormatDescriptinoCallback = (CMVideoFormatDescription) -> ()
-    var connection: NWConnection?
-    let queue = DispatchQueue(label: "de.nadoba.\(RTPH264Reciever.self).udp")
-    let listen: NWListener
-    public var didRecieveSampleBuffer: SampleBufferCallback?
-    public var didRecieveFormatDescription: FormatDescriptinoCallback?
-    private var timeManager: VideoPresentationTimeManager
-    public init(host: NWEndpoint.Host, port: NWEndpoint.Port, timebase: CMTimebase) {
-        timeManager = .init(timebase: timebase)
+public final class RTPH264RecieverListener {
+    private let queue = DispatchQueue(label: "de.nadoba.\(RTPH264Reciever.self).udp")
+    private let listen: NWListener
+    private let timebase: CMTimebase
+    private var currentReciever: RTPH264Reciever?
+    public var newConnectionHandler: ((RTPH264Reciever) -> ())?
+    public init(port: NWEndpoint.Port, timebase: CMTimebase) {
+        self.timebase = timebase
         let parameters = NWParameters.udp
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "0.0.0.0", port: port)
         listen = try! NWListener(using: parameters)
         
-        listen.newConnectionHandler = { connection in
+        listen.newConnectionHandler = { [weak self] connection in
+            guard let self = self else { return }
             
             connection.start(queue: self.queue)
-            self.scheduleReciveMessage(connection: connection)
+            let reciever = RTPH264Reciever(connection: connection, timebase: timebase)
+            self.currentReciever = reciever
+            self.newConnectionHandler?(reciever)
+            reciever.start()
+            
             
         }
+    }
+    func start() {
         listen.start(queue: queue)
+    }
+    deinit {
+        listen.cancel()
+    }
+}
+
+public final class RTPH264Reciever {
+    public typealias SampleBufferCallback = (CMSampleBuffer) -> ()
+    public typealias FormatDescriptinoCallback = (CMVideoFormatDescription) -> ()
+    public let connection: NWConnection
+    public var didRecieveSampleBuffer: SampleBufferCallback?
+    public var didRecieveFormatDescription: FormatDescriptinoCallback?
+    private var timeManager: VideoPresentationTimeManager
+    public init(connection: NWConnection, timebase: CMTimebase) {
+        timeManager = .init(timebase: timebase)
+        self.connection = connection
+    }
+    deinit {
+        connection.cancel()
+    }
+    
+    public func start() {
+        self.scheduleReciveMessage(connection: connection)
     }
     
     private func scheduleReciveMessage(connection: NWConnection) {
-
         connection.receiveMessage { [weak self] (data, context, isComplete, error) in
             guard let self = self else { return }
             defer {
