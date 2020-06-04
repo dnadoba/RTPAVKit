@@ -117,8 +117,16 @@ extension CVPixelBuffer {
 }
 
 public final class RTPH264Sender {
+    public enum State {
+        case setup
+        case prepairing
+        case connected
+        case failed
+        case canceled
+    }
     public typealias IntermediateData = [UInt8]
     public typealias PayloadData = DispatchData
+    public typealias DidChangeStateCallback = (State) -> ()
     private let queue: DispatchQueue
     private let collectionQueue: DispatchQueue = DispatchQueue(label: "de.nadoba.\(RTPH264Sender.self).data-transfer-report-collection")
     private var encoder: VideoEncoder?
@@ -126,11 +134,102 @@ public final class RTPH264Sender {
     private var rtpSerialzer: RTPSerialzer = .init(maxSizeOfPacket: 9216, synchronisationSource: RTPSynchronizationSource(rawValue: .random(in: UInt32.min...UInt32.max)))
     private lazy var h264Serialzer: H264.NALNonInterleavedPacketSerializer<IntermediateData, PayloadData> = .init(maxSizeOfNalu: rtpSerialzer.maxSizeOfPayload)
     public var onCollectConnectionMetric: ((NWConnection.DataTransferReport) -> ())?
-
+    public var didChangeState: DidChangeStateCallback?
+    
+    
+    private var _state: State = .setup {
+        didSet {
+            didChangeState?(_state)
+        }
+    }
+    public var state: State { queue.sync { _state } }
+    
+    private let timeoutInterval: DispatchTimeInterval = .milliseconds(400)
+    
     public init(connection: NWConnection, queue: DispatchQueue) {
         self.queue = queue
         self.connection = connection
+        start(on: connection)
     }
+    public func start() {
+        start(on: connection)
+    }
+    private func start(on connection: NWConnection) {
+        guard _state == .setup else { return }
+        _state = .prepairing
+        connection.stateUpdateHandler = { [weak self] newState in
+            guard let self = self else { return }
+            switch newState {
+            case .ready:
+                self._state = .connected
+                self.resetTimeout()
+                self.scheduleRecieveKeepAlive(on: connection)
+            case .cancelled:
+                self.cancel()
+            case let .failed(error):
+                self.failed(error: error)
+            default: break
+            }
+        }
+        connection.start(queue: queue)
+    }
+    public func cancel() {
+        guard _state == .connected || _state == .prepairing || _state == .setup else { return }
+        _state = .canceled
+        connection.cancel()
+    }
+    private func failed(error: NWError) {
+        print("connection failed \(error)")
+        guard _state == .prepairing || _state == .setup || _state == .connected else { return }
+        _state = .failed
+    }
+    
+    private func scheduleRecieveKeepAlive(on connection: NWConnection) {
+        connection.receiveMessage { [weak self] (data, context, isComplete, error) in
+            guard let self = self else { return }
+            guard self._state == .connected || self._state == .prepairing else { return }
+            defer {
+                self.scheduleRecieveKeepAlive(on: connection)
+            }
+            guard isComplete else {
+                print("did recieve incomplete message error: \(error as Any)")
+                return
+            }
+            if let error = error {
+                print(error)
+                
+                return
+            }
+            guard let data = data else {
+                print("recive message is complete and no error but also no data")
+                return
+            }
+            let expectedPayload = "keep alive".data(using: .utf8)
+            guard data == expectedPayload else {
+                print("recieved message contains wrong payload. Expected: \(String(decoding: data, as: UTF8.self)) Recieved: \(String(decoding: data, as: UTF8.self))")
+                return
+            }
+            self.resetTimeout()
+        }
+    }
+    
+    // MARK: - Timeout
+    private var lastTimeoutWorkItem: DispatchWorkItem?
+    private func resetTimeout() {
+        guard _state == .connected else { return }
+        lastTimeoutWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.timeout()
+        }
+        lastTimeoutWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + timeoutInterval, execute: workItem)
+    }
+    private func timeout() {
+        guard _state == .connected || _state == .prepairing else { return }
+        _state = .failed
+        connection.cancel()
+    }
+    
     @discardableResult
     public func setupEncoderIfNeeded(width: Int, height: Int) throws -> VideoEncoder {
         if let encoder = self.encoder, encoder.width == width, encoder.height == height {
@@ -166,6 +265,7 @@ public final class RTPH264Sender {
     private var frameCount: Int = 0
     
     public func encodeAndSendFrame(_ frame: CVPixelBuffer, presentationTimeStamp: CMTime, frameDuration: CMTime) {
+        guard self._state == .connected else { return }
         frameCount += 1
         do {
             let encoder = try setupEncoderIfNeeded(width: frame.width, height: frame.height)
@@ -240,7 +340,7 @@ public final class RTPH264Sender {
                         
                         let data: PayloadData = try rtpSerialzer.serialze(packet)
                         connection.send(content: data, contentContext: context, completion: .contentProcessed({ error in
-                            if let error = error {
+                            if let error = error, self._state == .connected {
                                 print(error)
                             }
                         }))
@@ -467,8 +567,8 @@ public final class RTPH264Reciever {
     }
     public var state: State { queue.sync { _state } }
     private let queue: DispatchQueue
-    private let timeoutInterval: DispatchTimeInterval = .milliseconds(100)
-    private let keepAliveMessageInterval: DispatchTimeInterval = .milliseconds(200)
+    private let timeoutInterval: DispatchTimeInterval = .milliseconds(400)
+    private let keepAliveMessageInterval: DispatchTimeInterval = .milliseconds(50)
     
     public init(connection: NWConnection, timebase: CMTimebase, target: DispatchQueue? = nil) {
         timeManager = .init(timebase: timebase)
