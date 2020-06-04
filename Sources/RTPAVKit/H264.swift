@@ -229,7 +229,7 @@ public final class RTPH264Sender {
         do {
             let packets = try h264Serialzer.serialize(nalus, timestamp: timestamp, lastNALUsForGivenTimestamp: true)
             let ipMetadata = NWProtocolIP.Metadata()
-            ipMetadata.serviceClass = .interactiveVideo
+            //ipMetadata.serviceClass = .interactiveVideo
             let context = NWConnection.ContentContext(
                 identifier: "RTP",
                 metadata: [ipMetadata]
@@ -445,32 +445,127 @@ public final class RTPH264RecieverListener {
 }
 
 public final class RTPH264Reciever {
+    public enum State {
+        case setup
+        case prepairing
+        case connected
+        case failed
+        case canceled
+    }
     public typealias SampleBufferCallback = (CMSampleBuffer) -> ()
     public typealias FormatDescriptinoCallback = (CMVideoFormatDescription) -> ()
+    public typealias DidChangeStateCallback = (State) -> ()
     public let connection: NWConnection
     public var didRecieveSampleBuffer: SampleBufferCallback?
     public var didRecieveFormatDescription: FormatDescriptinoCallback?
+    public var didChangeState: DidChangeStateCallback?
     private var timeManager: VideoPresentationTimeManager
-    public init(connection: NWConnection, timebase: CMTimebase) {
+    private var _state: State = .setup {
+        didSet {
+            didChangeState?(_state)
+        }
+    }
+    public var state: State { queue.sync { _state } }
+    private let queue: DispatchQueue
+    private let timeoutInterval: DispatchTimeInterval = .milliseconds(100)
+    private let keepAliveMessageInterval: DispatchTimeInterval = .milliseconds(200)
+    
+    public init(connection: NWConnection, timebase: CMTimebase, target: DispatchQueue? = nil) {
         timeManager = .init(timebase: timebase)
         self.connection = connection
+        self.queue = DispatchQueue(label: "RTPAVKit.\(RTPH264Reciever.self)", target: target)
     }
+
     deinit {
         connection.cancel()
     }
     
     public func start() {
-        self.scheduleReciveMessage(connection: connection)
+        self.start(connection: connection)
+    }
+    private func start(connection: NWConnection) {
+        guard _state == .setup else { return }
+        _state = .prepairing
+        connection.stateUpdateHandler = { [weak self] newState in
+            guard let self = self else { return }
+            switch newState {
+            case .ready:
+                self.sendKeepAliveMessage(on: connection, completion: .idempotent)
+                self.scheduleKeepAliveMessage(on: connection)
+                self.scheduleReciveMessage(on: connection)
+            case .cancelled:
+                self.cancel()
+            case let .failed(error):
+                self.failed(error: error)
+            default: break
+            }
+        }
+        connection.betterPathUpdateHandler = { betterPathAvailable in
+            print("Better Path Available: \(betterPathAvailable)")
+        }
+        connection.start(queue: queue)
     }
     
-    private func scheduleReciveMessage(connection: NWConnection) {
-        connection.receiveMessage { [weak self] (data, context, isComplete, error) in
+    public func cancel() {
+        guard _state == .connected || _state == .prepairing || _state == .setup else { return }
+        _state = .canceled
+        connection.cancel()
+    }
+    private func failed(error: NWError) {
+        print("connection failed \(error)")
+        guard _state == .prepairing || _state == .setup || _state == .connected else { return }
+        _state = .failed
+    }
+    
+    // MARK: - Keep Alive
+    private func scheduleKeepAliveMessage(on connection: NWConnection) {
+        queue.asyncAfter(deadline: .now() + keepAliveMessageInterval) { [weak self] in
             guard let self = self else { return }
+            self.sendKeepAliveMessage(on: connection, completion: .contentProcessed({ [weak self] (error) in
+                if let error = error {
+                    print(error)
+                    return
+                }
+                self?.scheduleKeepAliveMessage(on: connection)
+            }))
+        }
+    }
+    private let keepAliveMessageContext: NWConnection.ContentContext = {
+        let ipMetadata = NWProtocolIP.Metadata()
+        ipMetadata.serviceClass = .signaling
+        let context = NWConnection.ContentContext(identifier: "keep alive", metadata: [ipMetadata])
+        return context
+    }()
+    private func sendKeepAliveMessage(on connection: NWConnection, completion: NWConnection.SendCompletion) {
+        guard _state == .prepairing || _state == .connected else { return }
+        connection.send(content: "keep alive".data(using: .utf8)!, contentContext: keepAliveMessageContext, completion: completion)
+    }
+    
+    // MARK: - Timeout
+    private var lastTimeoutWorkItem: DispatchWorkItem?
+    private func resetTimeout() {
+        lastTimeoutWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.timeout()
+        }
+        lastTimeoutWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + timeoutInterval, execute: workItem)
+    }
+    private func timeout() {
+        guard _state == .connected || _state == .prepairing else { return }
+        _state = .failed
+        connection.cancel()
+    }
+    
+    private func scheduleReciveMessage(on: NWConnection) {
+        on.receiveMessage { [weak self] (data, context, isComplete, error) in
+            guard let self = self else { return }
+            guard self._state == .connected || self._state == .prepairing else { return }
             defer {
-                self.scheduleReciveMessage(connection: connection)
+                self.scheduleReciveMessage(on: on)
             }
             guard isComplete else {
-                print("did recieve incomplete message")
+                print("did recieve incomplete message error: \(error as Any)")
                 return
             }
             if let error = error {
@@ -485,6 +580,7 @@ public final class RTPH264Reciever {
         }
     }
     private func didReciveData(_ data: Data) {
+        resetTimeout()
         do {
             try parse(data)
         } catch {
