@@ -577,7 +577,13 @@ public final class RTPH264Reciever {
     }
 
     deinit {
-        connection.cancel()
+        cancel()
+    }
+    
+    public func updateTimebase(_ timebase: CMTimebase) {
+        queue.async { [weak self] in
+            self?.timeManager = VideoPresentationTimeManager(timebase: timebase)
+        }
     }
     
     public func start() {
@@ -590,6 +596,7 @@ public final class RTPH264Reciever {
             guard let self = self else { return }
             switch newState {
             case .ready:
+                self.resetTimeout()
                 self.sendKeepAliveMessage(on: connection, completion: .idempotent)
                 self.scheduleKeepAliveMessage(on: connection)
                 self.scheduleReciveMessage(on: connection)
@@ -645,6 +652,7 @@ public final class RTPH264Reciever {
     private var lastTimeoutWorkItem: DispatchWorkItem?
     private func resetTimeout() {
         lastTimeoutWorkItem?.cancel()
+        guard _state == .prepairing || _state == .connected else { return }
         let workItem = DispatchWorkItem { [weak self] in
             self?.timeout()
         }
@@ -652,7 +660,7 @@ public final class RTPH264Reciever {
         queue.asyncAfter(deadline: .now() + timeoutInterval, execute: workItem)
     }
     private func timeout() {
-        guard _state == .connected || _state == .prepairing else { return }
+        guard _state != .canceled && _state != .failed else { return }
         _state = .failed
         connection.cancel()
     }
@@ -681,6 +689,9 @@ public final class RTPH264Reciever {
     }
     private func didReciveData(_ data: Data) {
         resetTimeout()
+        if _state == .prepairing {
+            _state = .connected
+        }
         do {
             try parse(data)
         } catch {
