@@ -144,7 +144,7 @@ public final class RTPH264Sender {
     }
     public var state: State { queue.sync { _state } }
     
-    private let timeoutInterval: DispatchTimeInterval = .milliseconds(400)
+    private let timeoutInterval: DispatchTimeInterval = .milliseconds(1000)
     
     public init(connection: NWConnection, queue: DispatchQueue) {
         self.queue = queue
@@ -567,7 +567,7 @@ public final class RTPH264Reciever {
     }
     public var state: State { queue.sync { _state } }
     private let queue: DispatchQueue
-    private let timeoutInterval: DispatchTimeInterval = .milliseconds(400)
+    private let timeoutInterval: DispatchTimeInterval = .milliseconds(1000)
     private let keepAliveMessageInterval: DispatchTimeInterval = .milliseconds(50)
     
     public init(connection: NWConnection, timebase: CMTimebase, target: DispatchQueue? = nil) {
